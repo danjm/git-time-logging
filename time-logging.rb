@@ -15,88 +15,118 @@
 require 'date'
 require 'pp'
 
-days_back = (ARGV[0] || 8).to_i
+class Timelog
+	attr_accessor :branch_times, :tracked_times, :saved_tracked_times, :reflogs, :branch_numbers, :today, :log_days_since
+	
+	def initialize reflogs, days_back
+		@today = Date.today
+		@log_days_since = today - days_back
+		@branch_times = Hash.new(0)
 
-def line_to_ class_, line
-	class_.parse(line.match(/\{(.+)\}/)[1].to_s)
-end
+		sortedReflogs = reflogs.split(/\n+/)
+			.select  {|line| line.match(/checkout/) && log_days_since < (line_to_Date line)}
+			.sort_by {|line| line_to_DateTime line}
 
-def line_to_Date line
-	line_to_ Date, line
-end
-
-def line_to_DateTime line
-	line_to_ DateTime, line
-end
-
-def hour_difference end_time, start_time
-	[end_time, start_time].map {|l| line_to_DateTime l}.reduce(:-).to_f * 24
-end
-
-def create_urls branch_keys
-	branch_keys.map{|branch_name| ' ' + Base_url + branch_name.match(/BLNP\-\d+/).to_s}.join
-end
-
-def hours_to_tracked_time hours
-	def to_time val, time_unit
-		val = case time_unit
-			when "weeks" then val.to_i / 40
-			when "days" then val.to_i % 40 / 8
-			when "hours" then val.to_i % 8
-			when "minutes" then (val % 1 * 60).to_i
+		sortedReflogs.each_with_index do |line, index|
+			branch = line.match(/\sto\s(BLNP-\d+)/)
+			if branch && index < sortedReflogs.length - 1
+				@branch_times[branch[1]] += hour_difference sortedReflogs[index + 1], line
+			end
 		end
 		
-		val > 0 ? "#{val} #{time_unit} " : ""
+		reset_tracked_times
+		save_tracked_times
+		@reflogs = reflogs
+		@branch_numbers = @branch_times.keys.map{|key| key.match(/(\d+)/)[1]}
 	end
 	
-	["weeks", "days", "hours", "minutes"].map{|time_unit| to_time(hours, time_unit)}.join.strip
-end
+	def set_time branch_num, hours
+		@tracked_times['BLNP-' + branch_num] = hours_to_tracked_time hours
+	end
+	
+	def reset_tracked_times
+		@tracked_times = @branch_times.dup.update(@branch_times){|key, hours| hours_to_tracked_time(hours)}
+	end
+	
+	def save_tracked_times
+		@saved_tracked_times = @tracked_times.dup
+	end
+	
+	def undo_tracked_times_edits
+		@tracked_times = @saved_tracked_times.dup
+	end
+	
+	private
+	
+	def line_to_ class_, line
+		class_.parse(line.match(/\{(.+)\}/)[1].to_s)
+	end
 
-reflogs = `git reflog --date=default`
-today = Date.today
-log_days_since = today - days_back
-branch_times = Hash.new(0)
+	def line_to_Date line
+		line_to_ Date, line
+	end
 
-sortedReflogs = reflogs.split(/\n+/)
-	.select  {|line| line.match(/checkout/) && log_days_since < (line_to_Date line)}
-	.sort_by {|line| line_to_DateTime line}
+	def line_to_DateTime line
+		line_to_ DateTime, line
+	end
 
-sortedReflogs.each_with_index do |line, index|
-	branch = line.match(/\sto\s(BLNP-\d+)/)
-	if branch && index < sortedReflogs.length - 1
-		branch_times[branch[1]] += hour_difference sortedReflogs[index + 1], line
+	def hour_difference end_time, start_time
+		[end_time, start_time].map {|l| line_to_DateTime l}.reduce(:-).to_f * 24
+	end
+
+	def create_urls branch_keys
+		branch_keys.map{|branch_name| ' ' + Base_url + branch_name.match(/BLNP\-\d+/).to_s}.join
+	end
+
+	def hours_to_tracked_time hours
+		def to_time val, time_unit
+			val = case time_unit
+				when "weeks" then val.to_i / 40
+				when "days" then val.to_i % 40 / 8
+				when "hours" then val.to_i % 8
+				when "minutes" then (val % 1 * 60).to_i
+			end
+			
+			val > 0 ? "#{val}#{time_unit[0]} " : ""
+		end
+		
+		["weeks", "days", "hours", "minutes"].map{|time_unit| to_time(hours, time_unit)}.join.strip
 	end
 end
 
-tracked_times = branch_times.dup.update(branch_times){|key, hours| hours_to_tracked_time(hours)}
-branch_numbers = branch_times.keys.map{|key| key.match(/(\d+)/)[1]}
+days_back = (ARGV[0] || 8).to_i
+reflogs = `git reflog --date=default`
 
-def get_top_level_input
+time_log = Timelog.new reflogs, days_back
+
+def get_top_level_input tracked_times=false
+	puts "Your time tracked per branch:" if !!tracked_times
+	pp tracked_times if !!tracked_times
 	puts "What would you like to do?"
-	puts "1- commit times to JIRA, 2- edit times, 3- exit"
+	puts "1- commit times, 2- edit times, 3- exit"
 	$stdin.gets.chomp.to_s
 end
 
-puts "Your time tracked per branch:"
-pp tracked_times
-input = get_top_level_input
-while !['1', '3'].include? input
+input = get_top_level_input time_log.tracked_times
+while !['1', '3', 'x'].include? input
 	if input != '2'
 		input = get_top_level_input
 	else
 		puts "Enter the issue number you wish to edit. 'x' to cancel edits, 's' to save change and finish editing:"
 		branch_to_edit = $stdin.gets.chomp.to_s
-		if branch_to_edit == 'x'
-			input = get_top_level_input
-		elsif branch_numbers.include? branch_to_edit
-			puts "Enter the hours you'd like to track for BLNP-#{branch_to_edit}. ('x' to cancel_"
+		if ['x', 's'].include? branch_to_edit
+			time_log.undo_tracked_times_edits if branch_to_edit == 'x'
+			time_log.save_tracked_times if branch_to_edit == 's'
+			input = get_top_level_input time_log.tracked_times
+		elsif time_log.branch_numbers.include? branch_to_edit
+			puts "Enter the hours you'd like to track for BLNP-#{branch_to_edit}. ('x' to cancel)"
 			new_tracked_hours = $stdin.gets.chomp.to_s
 			if new_tracked_hours.to_f <= 0 && new_tracked_hours != '0'
 				puts "Invalid hours entered"
 			else
-				tracked_times['BLNP-' + branch_to_edit] = hours_to_tracked_time new_tracked_hours.to_f
+				time_log.set_time branch_to_edit, new_tracked_hours.to_f
 				puts "Branch times edited. Time tracked is now:"
-				pp tracked_times
+				pp time_log.tracked_times
 			end
 		else
 			puts "You have not worked on #{branch_to_edit} in the past #{days_back} days."
@@ -104,12 +134,18 @@ while !['1', '3'].include? input
 	end
 end
 if input == '1'
-	time_log_filename = today.to_s + '_time_logs.txt'
+	# time_log_filename = time_log.today.to_s + '_time_logs.txt'
 
-	File.open(time_log_filename, 'w') do |f|
-		f.puts "#{log_days_since} - #{today}"
-		PP.pp(tracked_times, f)
+	# File.open(time_log_filename, 'w') do |f|
+	# 	f.puts "#{time_log.log_days_since} - #{time_log.today}"
+	# 	PP.pp(time_log.tracked_times, f)
+	# end
+
+	# exec 'subl ' + time_log_filename
+	commits = time_log.tracked_times.map do |branch_time|
+		'git commit --allow-empty -m "' +
+		"#{branch_time[0]} #time #{branch_time[1]} Time logged on #{time_log.today.to_s}" +
+		'"'
 	end
-
-	exec 'subl ' + time_log_filename
+	exec commits.join(" && ")
 end
