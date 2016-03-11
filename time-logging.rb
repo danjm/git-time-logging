@@ -142,10 +142,13 @@ if input == '1'
 	# end
 
 	# exec 'subl ' + time_log_filename
-	commits = time_log.tracked_times.map do |branch_time|
-		'git commit --allow-empty -m "' +
-		"#{branch_time[0]} #time #{branch_time[1]} Time logged on #{time_log.today.to_s}" +
-		'"'
-	end
+	commits = time_log
+		.tracked_times
+		.select{|name, tracked_time| tracked_time.length > 0}
+		.map do |branch_time|
+			'git commit --allow-empty -m "' +
+			"#{branch_time[0]} #time #{branch_time[1]} Time logged on #{time_log.today.to_s}" +
+			'"'
+		end
 	exec commits.join(" && ")
 end
