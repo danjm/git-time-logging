@@ -40,6 +40,10 @@ class Timelog
 		@branch_numbers = @branch_times.keys.map{|key| key.match(/(\d+)/)[1]}
 	end
 	
+	def add_branch_number branch_number
+		@branch_numbers.insert -1, branch_number
+	end
+	
 	def set_time branch_num, hours
 		@tracked_times['BLNP-' + branch_num] = hours_to_tracked_time hours
 	end
@@ -103,22 +107,31 @@ def get_top_level_input tracked_times=false
 	puts "Your time tracked per branch:" if !!tracked_times
 	pp tracked_times if !!tracked_times
 	puts "What would you like to do?"
-	puts "1- commit times, 2- edit times, 3- exit"
+	puts "1- commit times, 2- edit times, 3-add branch, 4- exit"
 	$stdin.gets.chomp.to_s
 end
 
+edit_message = "Enter the issue number you wish to edit. 'x' to cancel edits, 's' to save changes and finish editing:"
+add_message = "Enter the issue number you wish to add. 'x' to cancel additions, 's' to save changes and finish adding:"
+
 input = get_top_level_input time_log.tracked_times
-while !['1', '3', 'x'].include? input
-	if input != '2'
+while !['1', '4', 'x'].include? input
+	if input != '2' && input != '3'
 		input = get_top_level_input
 	else
-		puts "Enter the issue number you wish to edit. 'x' to cancel edits, 's' to save change and finish editing:"
+		puts "#{input == '2' ? edit_message : add_message}"
 		branch_to_edit = $stdin.gets.chomp.to_s
 		if ['x', 's'].include? branch_to_edit
 			time_log.undo_tracked_times_edits if branch_to_edit == 'x'
 			time_log.save_tracked_times if branch_to_edit == 's'
 			input = get_top_level_input time_log.tracked_times
-		elsif time_log.branch_numbers.include? branch_to_edit
+		#TODO check that branch number is actually a branch when adding (input == '3')
+		#TODO add only for adding branch?
+		#TODO delete
+		#TODO clean this whole thing up somehow
+		#TODO prevent adding existing branches
+		elsif input == '2' && time_log.branch_numbers.include?(branch_to_edit) || input == '3'
+			time_log.add_branch_number(branch_to_edit) if input == '3'
 			puts "Enter the hours you'd like to track for BLNP-#{branch_to_edit}. ('x' to cancel)"
 			new_tracked_hours = $stdin.gets.chomp.to_s
 			if new_tracked_hours.to_f <= 0 && new_tracked_hours != '0'
